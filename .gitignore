@@ -26,3 +26,9 @@ Thumbs.db
 
 # Temp
 *.tmp
+
+# Secrets
+openrouter_key.txt
+
+# Generated files
+demo-recording.json

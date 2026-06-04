@@ -1,7 +1,7 @@
 {
   "name": "uthy-legacy-os",
-  "version": "1.0.0",
-  "description": "35 battle-tested product management skills for AI coding agents — discovery, problem definition, solution exploration, PRDs, shipping, measuring, and improvement. Works with Claude Code, Cursor, Codex CLI, Gemini CLI, and more.",
+  "version": "1.0.1",
+  "description": "Product Management CLI — AI-powered PM skills, chat, config, workflows. 35 skills for discovery, PRDs, shipping, measuring.",
   "keywords": [
     "product-management",
     "pm",
@@ -12,13 +12,13 @@
     "cursor",
     "codex",
     "gemini-cli",
-    "copilot",
     "agent-skills",
     "skill-md",
     "prd",
     "user-stories",
     "discovery",
-    "product-strategy"
+    "product-strategy",
+    "cli"
   ],
   "homepage": "https://uthumany.github.io/uthy-legacy-os",
   "repository": {
@@ -31,8 +31,7 @@
   "license": "MIT",
   "author": "Uthuman & Co <dev@uthuman.com>",
   "bin": {
-    "uthy-legacy-os": "bin/cli.js",
-    "uthy-pm": "bin/cli.js",
+    "uthy-pm": "bin/uthy",
     "uthy-install": "bin/cli.js"
   },
   "engines": {
@@ -41,13 +40,10 @@
   "scripts": {
     "validate": "python scripts/validate-skills.py",
     "postinstall": "node bin/cli.js",
-    "start": "node bin/cli.js",
+    "start": "node bin/uthy",
     "docs": "echo 'Docs served via GitHub Pages at docs/'"
   },
   "preferGlobal": true,
-  "volta": {
-    "node": ">=18.0.0"
-  },
   "files": [
     "skills/",
     "workflows/",
@@ -61,5 +57,8 @@
     "README.md",
     "AGENTS.md",
     "LICENSE"
-  ]
+  ],
+  "dependencies": {
+    "commander": "^15.0.0"
+  }
 }

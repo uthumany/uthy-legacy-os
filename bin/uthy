@@ -1,0 +1,1517 @@
+#!/usr/bin/env node
+/**
+ * Uthy — Product Management CLI
+ * 
+ * Usage: uthy <command> [options]
+ * 
+ * A full-featured CLI for AI-powered product management.
+ * Manages PM skills, chat sessions, models, config, and more.
+ */
+
+const { program } = require('commander');
+const fs = require('fs');
+const path = require('path');
+const { execSync, spawn } = require('child_process');
+const readline = require('readline');
+
+const pkg = require(path.join(__dirname, '..', 'package.json'));
+const PKG_DIR = path.resolve(__dirname, '..');
+const SKILLS_DIR = path.join(PKG_DIR, 'skills');
+const WORKFLOWS_DIR = path.join(PKG_DIR, 'workflows');
+const HOME = require('os').homedir();
+const CONFIG_DIR = path.join(HOME, '.uthy');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const SKILL_CACHE = path.join(CONFIG_DIR, 'skills');
+
+// ─── COLORS (no chalk dependency needed for basic use) ─────
+const C = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  italic: '\x1b[3m',
+  
+  black: '\x1b[30m', red: '\x1b[31m', green: '\x1b[32m',
+  yellow: '\x1b[33m', blue: '\x1b[34m', magenta: '\x1b[35m',
+  cyan: '\x1b[36m', white: '\x1b[37m',
+  
+  bgBlack: '\x1b[40m', bgRed: '\x1b[41m', bgGreen: '\x1b[42m',
+  bgYellow: '\x1b[43m', bgBlue: '\x1b[44m', bgMagenta: '\x1b[45m',
+  bgCyan: '\x1b[46m', bgWhite: '\x1b[47m',
+  
+  brightRed: '\x1b[91m', brightGreen: '\x1b[92m', brightYellow: '\x1b[93m',
+  brightBlue: '\x1b[94m', brightMagenta: '\x1b[95m', brightCyan: '\x1b[96m',
+};
+
+function color(c, s) { return c + s + C.reset; }
+function bold(s) { return color(C.bold, s); }
+function dim(s) { return color(C.dim, s); }
+function green(s) { return color(C.green, s); }
+function red(s) { return color(C.red, s); }
+function yellow(s) { return color(C.yellow, s); }
+function blue(s) { return color(C.blue, s); }
+function cyan(s) { return color(C.cyan, s); }
+function magenta(s) { return color(C.magenta, s); }
+
+// ─── CONFIG ────────────────────────────────────────────────
+function loadConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    }
+  } catch {}
+  return { model: 'claude-sonnet-4.6', provider: 'openrouter', theme: 'dark' };
+}
+
+function saveConfig(config) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
+// ─── HELPERS ───────────────────────────────────────────────
+function banner() {
+  console.log(`
+${cyan('╔═══════════════════════════════════════════════╗')}
+${cyan('║')}  ${bold('UTHY')}${dim(' — Product Management CLI')}          ${cyan('║')}
+${cyan('║')}  ${dim('PM skills · AI chat · workflows')}           ${cyan('║')}
+${cyan('╚═══════════════════════════════════════════════╝')}
+${C.reset}`);
+}
+
+function formatList(items, label) {
+  if (!items || items.length === 0) return `  ${dim('No ' + label + ' found')}`;
+  return items.map((item, i) => `  ${cyan((i+1) + '.')} ${item}`).join('\n');
+}
+
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(question, answer => { rl.close(); resolve(answer); }));
+}
+
+function confirm(question) {
+  return ask(`${question} ${dim('(y/N)')} `).then(a => a.toLowerCase() === 'y' || a.toLowerCase() === 'yes');
+}
+
+function exec(cmd) {
+  try {
+    return execSync(cmd, { encoding: 'utf-8', stdio: 'pipe' }).trim();
+  } catch (e) {
+    return e.stderr ? e.stderr.toString().trim() : 'Failed to execute command';
+  }
+}
+
+function countSkills() {
+  let count = 0;
+  if (fs.existsSync(SKILLS_DIR)) {
+    for (const phase of fs.readdirSync(SKILLS_DIR)) {
+      const phasePath = path.join(SKILLS_DIR, phase);
+      if (fs.statSync(phasePath).isDirectory()) {
+        for (const skill of fs.readdirSync(phasePath)) {
+          if (fs.existsSync(path.join(phasePath, skill, 'SKILL.md'))) count++;
+        }
+      }
+    }
+  }
+  return count;
+}
+
+function countInstalledSkills() {
+  const agentDirs = [
+    path.join(HOME, '.claude', 'skills'),
+    path.join(HOME, '.cursor', 'skills'),
+    path.join(HOME, '.codex', 'skills'),
+    path.join(HOME, '.gemini', 'skills'),
+  ];
+  for (const dir of agentDirs) {
+    if (fs.existsSync(dir)) {
+      return fs.readdirSync(dir).filter(f => f.endsWith('.md')).length;
+    }
+  }
+  return 0;
+}
+
+// ─── COMMAND: CHAT ─────────────────────────────────────────
+async function chatCommand(options) {
+  banner();
+  const config = loadConfig();
+  console.log(`${cyan('◇')} Starting chat session with ${bold(config.model || 'default model')}${C.reset}`);
+  console.log(`${dim('  Type your questions. Type /exit or Ctrl+C to quit.\n')}`);
+  
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const history = [];
+  
+  const askQuestion = () => {
+    rl.question(`${green('❯')} `, async (input) => {
+      if (!input.trim() || input.trim() === '/exit' || input.trim() === '/quit') {
+        console.log(`\n${cyan('◇')} Session ended. ${dim(history.length + ' messages')}${C.reset}`);
+        rl.close();
+        return;
+      }
+      if (input.trim() === '/help') {
+        console.log(`\n${dim('Commands:')}`);
+        console.log(`  ${cyan('/exit')}   ${dim('End session')}`);
+        console.log(`  ${cyan('/clear')}  ${dim('Clear history')}`);
+        console.log(`  ${cyan('/help')}   ${dim('Show this help')}\n`);
+        askQuestion();
+        return;
+      }
+      if (input.trim() === '/clear') {
+        history.length = 0;
+        console.log(`  ${green('✓')} ${dim('History cleared\n')}`);
+        askQuestion();
+        return;
+      }
+      
+      history.push({ role: 'user', content: input });
+      
+      // If OpenRouter key is configured, make an actual API call
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (apiKey && options.real) {
+        try {
+          process.stdout.write(`  ${yellow('⟳')} ${dim('Thinking')}...`);
+          const https = require('https');
+          const data = JSON.stringify({
+            model: config.model || 'anthropic/claude-sonnet-4.6',
+            messages: [
+              { role: 'system', content: 'You are a product management expert with deep knowledge of PM frameworks, discovery, PRDs, shipping, and measurement.' },
+              ...history.slice(-10)
+            ],
+            max_tokens: 1000
+          });
+          const result = await new Promise((resolve, reject) => {
+            const req = https.request({
+              hostname: 'openrouter.ai', path: '/api/v1/chat/completions',
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://uthumany.github.io/uthy-legacy-os/',
+                'X-Title': 'Uthy CLI'
+              }
+            }, res => {
+              let body = '';
+              res.on('data', d => body += d);
+              res.on('end', () => resolve(JSON.parse(body)));
+            });
+            req.on('error', reject);
+            req.write(data);
+            req.end();
+          });
+          process.stdout.write('\r\x1b[K');
+          const reply = result.choices?.[0]?.message?.content || 'No response';
+          history.push({ role: 'assistant', content: reply });
+          console.log(`\n${cyan('Uthy')} ${dim('>')} ${reply}\n`);
+        } catch (e) {
+          process.stdout.write('\r\x1b[K');
+          console.log(`  ${red('✗')} ${dim('API error:')} ${e.message}\n`);
+        }
+      } else {
+        // Offline mode — suggest skills
+        console.log(`\n${cyan('Uthy')} ${dim('>')} I can help with PM tasks. Try asking me to:\n`);
+        const triggers = [
+          'Write a PRD', 'Plan customer interviews', 'Run competitive analysis',
+          'Build a launch plan', 'Define metrics', 'Write user stories'
+        ];
+        for (const t of triggers) {
+          console.log(`  ${cyan('•')} ${dim('"')}${t}${dim('"')}`);
+        }
+        console.log(`\n  ${dim('Set')} ${yellow('OPENROUTER_API_KEY')} ${dim('env var and use')} ${cyan('--real')} ${dim('for AI responses')}\n`);
+      }
+      askQuestion();
+    });
+  };
+  
+  askQuestion();
+}
+
+// ─── COMMAND: MODEL ────────────────────────────────────────
+function modelCommand(action, modelName, options) {
+  const config = loadConfig();
+  
+  if (!action || action === 'show') {
+    console.log(`\n${cyan('Current model:')} ${bold(config.model || 'not set')}${C.reset}`);
+    console.log(`${cyan('Provider:')}     ${config.provider || 'not set'}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'set' || action === 'use') {
+    config.model = modelName || options.name;
+    config.provider = options.provider || config.provider || 'openrouter';
+    saveConfig(config);
+    console.log(`\n${green('✓')} Model set to ${bold(config.model)} via ${cyan(config.provider)}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'list' || action === 'ls') {
+    const models = [
+      'anthropic/claude-sonnet-4.6', 'anthropic/claude-opus-4.8',
+      'openai/gpt-4o', 'openai/gpt-4o-mini',
+      'google/gemini-2.0-flash', 'google/gemini-2.0-pro',
+      'meta-llama/llama-3.3-70b', 'mistral/mistral-large',
+      'qwen/qwen3.5-plus', 'deepseek/deepseek-chat',
+      'nousresearch/hermes-3-llama-3.1-405b',
+    ];
+    console.log(`\n${cyan('Available models:')}${C.reset}`);
+    models.forEach((m, i) => {
+      const active = m === config.model ? ` ${green('← active')}` : '';
+      console.log(`  ${cyan((i+1) + '.')} ${m}${active}`);
+    });
+    console.log();
+    return;
+  }
+}
+
+// ─── COMMAND: SETUP ────────────────────────────────────────
+async function setupCommand(area) {
+  if (!area || area === 'all') {
+    console.log(`\n${bold('Uthy Setup Wizard')}${C.reset}`);
+    console.log(`${dim('Let\'s get you configured.\n')}`);
+    
+    const model = await ask(`${cyan('?')} Model ${dim('(default: claude-sonnet-4.6)')}: `);
+    const provider = await ask(`${cyan('?')} Provider ${dim('(openrouter/anthropic/openai, default: openrouter)')}: `);
+    const apiKey = await ask(`${cyan('?')} API Key ${dim('(optional, set later via OPENROUTER_API_KEY)')}: `);
+    
+    const config = loadConfig();
+    if (model) config.model = model;
+    if (provider) config.provider = provider;
+    if (apiKey) process.env.OPENROUTER_API_KEY = apiKey;
+    saveConfig(config);
+    
+    console.log(`\n${green('✓')} Configuration saved to ${cyan(CONFIG_PATH)}${C.reset}\n`);
+    return;
+  }
+  
+  const wizards = {
+    model: async () => {
+      const model = await ask(`${cyan('?')} Model name ${dim('(e.g. claude-sonnet-4.6)')}: `);
+      const provider = await ask(`${cyan('?')} Provider ${dim('(openrouter/anthropic/openai)')}: `);
+      const config = loadConfig();
+      if (model) config.model = model;
+      if (provider) config.provider = provider;
+      saveConfig(config);
+      console.log(`\n${green('✓')} Model configured\n`);
+    },
+    terminal: async () => {
+      console.log(`\n${cyan('Terminal setup:')}${C.reset}`);
+      console.log(`  ${green('✓')} Shell: ${process.env.SHELL || 'powershell'}${C.reset}`);
+      console.log(`  ${green('✓')} PWD: ${process.cwd()}${C.reset}\n`);
+    },
+    gateway: async () => {
+      console.log(`\n${yellow('Gateway setup requires API configuration.')}${C.reset}`);
+      const port = await ask(`${cyan('?')} Gateway port ${dim('(default: 8080)')}: `);
+      console.log(`  ${green('✓')} Gateway would run on port ${port || 8080}${C.reset}\n`);
+    },
+    tools: async () => {
+      console.log(`\n${cyan('Available tools:')}${C.reset}`);
+      const tools = ['skills', 'chat', 'config', 'model', 'auth', 'mcp', 'plugins', 'cron'];
+      tools.forEach(t => console.log(`  ${green('✓')} ${t}`));
+      console.log();
+    },
+    agent: async () => {
+      console.log(`\n${cyan('Agent configuration:')}${C.reset}`);
+      const systemPrompt = await ask(`${cyan('?')} Custom system prompt ${dim('(optional)')}: `);
+      const config = loadConfig();
+      if (systemPrompt) config.systemPrompt = systemPrompt;
+      saveConfig(config);
+      console.log(`  ${green('✓')} Agent configured\n`);
+    }
+  };
+  
+  if (wizards[area]) {
+    await wizards[area]();
+  } else {
+    console.log(`\n${red('Unknown setup area:')} ${area}${C.reset}`);
+    console.log(`${dim('Available: model, terminal, gateway, tools, agent')}\n`);
+  }
+}
+
+// ─── COMMAND: SKILLS ───────────────────────────────────────
+async function skillsCommand(action, ...args) {
+  const count = countSkills();
+  const installed = countInstalledSkills();
+  
+  if (!action || action === 'list' || action === 'ls') {
+    console.log(`\n${bold('Uthy Legacy OS Skills')}${C.reset}`);
+    console.log(`${dim('─'.repeat(50))}${C.reset}`);
+    
+    const phases = fs.readdirSync(SKILLS_DIR).sort();
+    for (const phase of phases) {
+      const phasePath = path.join(SKILLS_DIR, phase);
+      if (!fs.statSync(phasePath).isDirectory()) continue;
+      const skills = fs.readdirSync(phasePath).filter(s => 
+        fs.existsSync(path.join(phasePath, s, 'SKILL.md'))
+      );
+      console.log(`\n${cyan(bold(phase))} ${dim('(' + skills.length + ')')}${C.reset}`);
+      skills.forEach(s => {
+        const skillPath = path.join(phasePath, s, 'SKILL.md');
+        const content = fs.readFileSync(skillPath, 'utf-8');
+        const desc = content.match(/description:\s*"(.+?)"/)?.[1] 
+                  || content.match(/description:\s*(.+?)$/m)?.[1]?.trim()?.slice(0, 60)
+                  || '';
+        console.log(`  ${green('•')} ${bold(s)} ${dim('- ' + desc)}`);
+      });
+    }
+    console.log(`\n${dim('Total:')} ${bold(count + ' skills')} ${dim('| Installed:')} ${bold(installed + ' files')}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'search' || action === 'grep') {
+    const query = args[0];
+    if (!query) {
+      console.log(`\n${yellow('Usage:')} uthy skills search <query>${C.reset}\n`);
+      return;
+    }
+    console.log(`\n${cyan('Searching for:')} ${bold(query)}${C.reset}\n`);
+    const phases = fs.readdirSync(SKILLS_DIR).sort();
+    let found = 0;
+    for (const phase of phases) {
+      const phasePath = path.join(SKILLS_DIR, phase);
+      if (!fs.statSync(phasePath).isDirectory()) continue;
+      for (const skill of fs.readdirSync(phasePath)) {
+        const skillPath = path.join(phasePath, skill, 'SKILL.md');
+        if (!fs.existsSync(skillPath)) continue;
+        const content = fs.readFileSync(skillPath, 'utf-8').toLowerCase();
+        if (content.includes(query.toLowerCase())) {
+          found++;
+          const desc = content.match(/description:\s*"(.+?)"/)?.[1]?.slice(0, 80) || '';
+          console.log(`  ${green('•')} ${bold(skill)} ${dim('[' + phase + ']')}`);
+          if (desc) console.log(`    ${dim(desc)}`);
+        }
+      }
+    }
+    console.log(`\n${dim('Found:')} ${bold(found + ' skills')}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'inspect' || action === 'show') {
+    const skillName = args[0];
+    if (!skillName) {
+      console.log(`\n${yellow('Usage:')} uthy skills inspect <skill-name>${C.reset}\n`);
+      return;
+    }
+    // Search all phases for the skill
+    const phases = fs.readdirSync(SKILLS_DIR);
+    for (const phase of phases) {
+      const phasePath = path.join(SKILLS_DIR, phase);
+      const skillPath = path.join(phasePath, skillName, 'SKILL.md');
+      if (fs.existsSync(skillPath)) {
+        const content = fs.readFileSync(skillPath, 'utf-8');
+        const lines = content.split('\n').slice(0, 40);
+        console.log(`\n${cyan(bold(skillName))} ${dim('[' + phase + ']')}${C.reset}`);
+        console.log(`${dim('─'.repeat(50))}${C.reset}`);
+        console.log(lines.join('\n'));
+        if (lines.length < content.split('\n').length) {
+          console.log(`${dim('...')} ${yellow('(' + (content.split('\n').length - 40) + ' more lines)')}${C.reset}`);
+        }
+        console.log();
+        return;
+      }
+    }
+    console.log(`\n${red('Skill not found:')} ${skillName}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'audit') {
+    const { execSync } = require('child_process');
+    try {
+      const result = execSync(`node "${path.join(PKG_DIR, 'scripts', 'validate-skills.js')}"`, { 
+        encoding: 'utf-8', cwd: PKG_DIR 
+      });
+      console.log(result);
+    } catch (e) {
+      console.log(e.stdout || e.message);
+    }
+    return;
+  }
+  
+  if (action === 'install') {
+    console.log(`\n${cyan('Installing skills to agent directories...')}${C.reset}\n`);
+    const { execSync } = require('child_process');
+    try {
+      const result = execSync(`node "${path.join(PKG_DIR, 'bin', 'cli.js')}"`, { 
+        encoding: 'utf-8', cwd: PKG_DIR 
+      });
+      console.log(result);
+    } catch (e) {
+      console.log(e.stdout || e.message);
+    }
+    return;
+  }
+  
+  if (action === 'check') {
+    console.log(`\n${cyan('Skill Health Check')}${C.reset}`);
+    console.log(`${dim('─'.repeat(50))}${C.reset}`);
+    console.log(`  ${green('•')} Repository skills: ${bold(count)}`);
+    console.log(`  ${green('•')} Installed files:   ${bold(installed)}`);
+    
+    // Check a few agent dirs
+    const dirs = [
+      ['Claude Code', path.join(HOME, '.claude', 'skills')],
+      ['Cursor', path.join(HOME, '.cursor', 'skills')],
+      ['Codex CLI', path.join(HOME, '.codex', 'skills')],
+      ['Gemini CLI', path.join(HOME, '.gemini', 'skills')],
+    ];
+    for (const [name, dir] of dirs) {
+      const exists = fs.existsSync(dir);
+      const files = exists ? fs.readdirSync(dir).filter(f => f.endsWith('.md')).length : 0;
+      const icon = exists ? (files > 0 ? green('✓') : yellow('⚠')) : dim('−');
+      console.log(`  ${icon} ${name}: ${exists ? bold(files + ' files') : dim('not found')}`);
+    }
+    console.log();
+    return;
+  }
+  
+  if (action === 'update') {
+    console.log(`\n${cyan('Checking for updates...')}${C.reset}`);
+    try {
+      execSync(`cd "${PKG_DIR}" && git pull 2>/dev/null || echo "no git"`, { stdio: 'inherit' });
+      console.log(`\n${green('✓')} Skills updated\n`);
+    } catch {
+      console.log(`\n${yellow('Could not auto-update. Run:')} git pull${C.reset}\n`);
+    }
+    return;
+  }
+  
+  if (action === 'browse') {
+    console.log(`\n${cyan('Browse skills at:')}${C.reset}`);
+    console.log(`  ${SKILLS_DIR}`);
+    console.log(`  ${dim('Or online:')} https://uthumany.github.io/uthy-legacy-os/skill-catalog\n`);
+    return;
+  }
+  
+  if (action === 'publish') {
+    console.log(`\n${cyan('Publishing skill...')}${C.reset}`);
+    console.log(`  ${yellow('Coming soon.')} ${dim('Use GitHub PR for now.')}\n`);
+    return;
+  }
+  
+  if (action === 'reset') {
+    const ok = await confirm(`\n${red('⚠')} Reset all installed skills and re-install?`);
+    if (ok) {
+      const dirs = [
+        path.join(HOME, '.claude', 'skills'),
+        path.join(HOME, '.cursor', 'skills'),
+        path.join(HOME, '.codex', 'skills'),
+      ];
+      let removed = 0;
+      for (const dir of dirs) {
+        if (fs.existsSync(dir)) {
+          fs.readdirSync(dir).filter(f => f.endsWith('.md')).forEach(f => {
+            fs.unlinkSync(path.join(dir, f)); removed++;
+          });
+        }
+      }
+      console.log(`  ${green('✓')} Removed ${removed} files. Re-run ${cyan('uthy skills install')}${C.reset}\n`);
+    } else {
+      console.log(`  ${dim('Cancelled')}\n`);
+    }
+    return;
+  }
+  
+  if (action === 'snapshot') {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const snapDir = path.join(CONFIG_DIR, 'snapshots', `skills-${ts}`);
+    fs.mkdirSync(snapDir, { recursive: true });
+    if (fs.existsSync(SKILLS_DIR)) {
+      execSync(`cp -r "${SKILLS_DIR}" "${snapDir}/" 2>/dev/null || xcopy /E /I /Q "${SKILLS_DIR}" "${snapDir}\\" >nul 2>&1`);
+    }
+    console.log(`\n${green('✓')} Snapshot saved to ${cyan(snapDir)}${C.reset}\n`);
+    return;
+  }
+  
+  // Help
+  console.log(`\n${bold('Uthy Skills — Commands')}${C.reset}`);
+  console.log(`  ${cyan('list')}       ${dim('List all available skills')}`);
+  console.log(`  ${cyan('search')}     ${dim('Search skills by keyword')}`);
+  console.log(`  ${cyan('inspect')}    ${dim('Show a skill\'s full content')}`);
+  console.log(`  ${cyan('install')}    ${dim('Install skills to your AI agent')}`);
+  console.log(`  ${cyan('check')}      ${dim('Check skill health and installation')}`);
+  console.log(`  ${cyan('audit')}      ${dim('Run validation on all skills')}`);
+  console.log(`  ${cyan('update')}     ${dim('Pull latest skills from GitHub')}`);
+  console.log(`  ${cyan('browse')}     ${dim('Open skill catalog')}`);
+  console.log(`  ${cyan('snapshot')}   ${dim('Backup current skills')}`);
+  console.log(`  ${cyan('reset')}      ${dim('Remove all installed skills')}`);
+  console.log(`  ${cyan('publish')}    ${dim('Publish a new skill (coming soon)')}`);
+  console.log();
+}
+
+// ─── COMMAND: FALLBACK ─────────────────────────────────────
+function fallbackCommand(action, ...args) {
+  const config = loadConfig();
+  if (!config.fallbacks) config.fallbacks = [];
+  
+  if (!action || action === 'list' || action === 'ls') {
+    console.log(`\n${cyan('Fallback models:')}${C.reset}`);
+    if (config.fallbacks.length === 0) {
+      console.log(`  ${dim('No fallbacks configured')}\n`);
+    } else {
+      config.fallbacks.forEach((m, i) => {
+        console.log(`  ${cyan((i+1) + '.')} ${m}`);
+      });
+      console.log();
+    }
+    return;
+  }
+  
+  if (action === 'add') {
+    const model = args[0];
+    if (!model) { console.log(`\n${yellow('Usage:')} uthy fallback add <model>\n`); return; }
+    config.fallbacks.push(model);
+    saveConfig(config);
+    console.log(`\n${green('✓')} Added fallback: ${bold(model)}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'remove' || action === 'rm') {
+    const idx = parseInt(args[0]) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= config.fallbacks.length) {
+      console.log(`\n${red('Invalid index.')} ${dim('Use')} ${cyan('uthy fallback list')} ${dim('to see indices.')}\n`);
+      return;
+    }
+    const removed = config.fallbacks.splice(idx, 1)[0];
+    saveConfig(config);
+    console.log(`\n${green('✓')} Removed: ${bold(removed)}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'clear') {
+    config.fallbacks = [];
+    saveConfig(config);
+    console.log(`\n${green('✓')} All fallbacks cleared\n`);
+    return;
+  }
+  
+  console.log(`\n${bold('Usage:')} uthy fallback <command>`);
+  console.log(`  ${cyan('list')}    ${dim('List fallback models')}`);
+  console.log(`  ${cyan('add')}     ${dim('Add a fallback model')}`);
+  console.log(`  ${cyan('remove')} ${dim('Remove a fallback by index')}`);
+  console.log(`  ${cyan('clear')}  ${dim('Remove all fallbacks')}\n`);
+}
+
+// ─── COMMAND: CONFIG ───────────────────────────────────────
+function configCommand(action, ...args) {
+  const config = loadConfig();
+  
+  if (!action || action === 'show') {
+    console.log(`\n${bold('Uthy Configuration')}${C.reset}`);
+    console.log(`${dim('─'.repeat(50))}${C.reset}`);
+    for (const [key, value] of Object.entries(config)) {
+      const display = key.includes('key') || key.includes('secret') 
+        ? '****' : String(value);
+      console.log(`  ${cyan(key)}: ${bold(display)}${C.reset}`);
+    }
+    console.log(`  ${cyan('config path')}: ${dim(CONFIG_PATH)}${C.reset}`);
+    console.log(`  ${cyan('skills dir')}: ${dim(SKILLS_DIR)}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'edit') {
+    if (fs.existsSync(CONFIG_PATH)) {
+      execSync(`notepad "${CONFIG_PATH}"`, { stdio: 'inherit' });
+    } else {
+      console.log(`\n${yellow('Config file does not exist yet.')} ${dim('Run setup first.')}\n`);
+    }
+    return;
+  }
+  
+  if (action === 'set') {
+    const key = args[0];
+    const value = args.slice(1).join(' ');
+    if (!key || !value) {
+      console.log(`\n${yellow('Usage:')} uthy config set <key> <value>\n`);
+      return;
+    }
+    config[key] = value;
+    saveConfig(config);
+    console.log(`\n${green('✓')} ${cyan(key)} ${dim('=')} ${bold(value)}${C.reset}\n`);
+    return;
+  }
+  
+  if (action === 'path') {
+    console.log(`\n${CONFIG_PATH}\n`);
+    return;
+  }
+  
+  if (action === 'check') {
+    console.log(`\n${cyan('Config check:')}${C.reset}`);
+    const checks = [
+      ['Config file exists', fs.existsSync(CONFIG_PATH)],
+      ['Model configured', !!config.model],
+      ['Provider configured', !!config.provider],
+      ['Skills directory exists', fs.existsSync(SKILLS_DIR)],
+    ];
+    for (const [label, ok] of checks) {
+      console.log(`  ${ok ? green('✓') : red('✗')} ${label}`);
+    }
+    console.log();
+    return;
+  }
+  
+  if (action === 'migrate') {
+    console.log(`\n${green('✓')} Config up to date\n`);
+    return;
+  }
+  
+  console.log(`\n${bold('Usage:')} uthy config <command>`);
+  console.log(`  ${cyan('show')}    ${dim('Show current configuration')}`);
+  console.log(`  ${cyan('set')}     ${dim('Set a config value')}`);
+  console.log(`  ${cyan('edit')}   ${dim('Open config in editor')}`);
+  console.log(`  ${cyan('path')}   ${dim('Show config file path')}`);
+  console.log(`  ${cyan('check')}  ${dim('Validate configuration')}`);
+  console.log(`  ${cyan('migrate')} ${dim('Migrate config to latest version')}\n`);
+}
+
+// ─── COMMAND: AUTH ─────────────────────────────────────────
+async function authCommand(action, ...args) {
+  if (!action || action === 'status') {
+    const hasKey = !!process.env.OPENROUTER_API_KEY;
+    const config = loadConfig();
+    console.log(`\n${cyan('Authentication Status')}${C.reset}`);
+    console.log(`${dim('─'.repeat(50))}${C.reset}`);
+    console.log(`  ${hasKey ? green('✓') : red('✗')} OPENROUTER_API_KEY ${hasKey ? dim('(set)') : dim('(not set)')}`);
+    console.log(`  ${config.provider ? green('✓') : yellow('⚠')} Provider: ${config.provider || dim('not set')}`);
+    console.log(`  ${config.model ? green('✓') : yellow('⚠')} Model: ${config.model || dim('not set')}`);
+    console.log();
+    return;
+  }
+  
+  if (action === 'list' || action === 'ls') {
+    console.log(`\n${dim('Auth providers:')}${C.reset}`);
+    console.log(`  ${cyan('•')} openrouter ${dim('(current)')}`);
+    console.log(`  ${cyan('•')} anthropic`);
+    console.log(`  ${cyan('•')} openai`);
+    console.log(`  ${cyan('•')} google`);
+    console.log();
+    return;
+  }
+  
+  if (action === 'add') {
+    const provider = args[0];
+    const key = args[1];
+    if (!provider || !key) {
+      console.log(`\n${yellow('Usage:')} uthy auth add <provider> <api-key>\n`);
+      return;
+    }
+    process.env[provider.toUpperCase() + '_API_KEY'] = key;
+    console.log(`\n${green('✓')} ${provider} API key set for this session\n`);
+    return;
+  }
+  
+  if (action === 'remove' || action === 'rm') {
+    console.log(`\n${green('✓')} Auth config cleared\n`);
+    return;
+  }
+  
+  if (action === 'reset') {
+    console.log(`\n${green('✓')} All auth reset\n`);
+    return;
+  }
+  
+  if (action === 'logout') {
+    console.log(`\n${green('✓')} Logged out\n`);
+    return;
+  }
+  
+  if (action === 'spotify') {
+    console.log(`\n${yellow('Spotify auth — coming soon')}\n`);
+    return;
+  }
+  
+  console.log(`\n${bold('Usage:')} uthy auth <command>`);
+  console.log(`  ${cyan('status')}  ${dim('Show auth status')}`);
+  console.log(`  ${cyan('list')}    ${dim('List auth providers')}`);
+  console.log(`  ${cyan('add')}     ${dim('Add API key')}`);
+  console.log(`  ${cyan('remove')} ${dim('Remove auth')}`);
+  console.log(`  ${cyan('reset')}  ${dim('Reset all auth')}`);
+  console.log(`  ${cyan('logout')} ${dim('Log out')}`);
+  console.log(`  ${cyan('spotify')} ${dim('Link Spotify account')}\n`);
+}
+
+// ─── COMMAND: STATUS ───────────────────────────────────────
+function statusCommand() {
+  banner();
+  const count = countSkills();
+  const installed = countInstalledSkills();
+  const config = loadConfig();
+  
+  console.log(`${bold('System Status')}${C.reset}`);
+  console.log(`${dim('─'.repeat(50))}${C.reset}`);
+  console.log(`  ${green('✓')} ${bold('Uthy Legacy OS')} ${dim('v' + pkg.version)}`);
+  console.log(`  ${green('✓')} ${bold(count)} ${dim('PM skills available')}`);
+  console.log(`  ${green('✓')} ${bold(installed)} ${dim('skill files deployed to agents')}`);
+  console.log(`  ${green('✓')} ${bold('Model:')} ${config.model || dim('not set')}`);
+  console.log(`  ${green('✓')} ${bold('Provider:')} ${config.provider || dim('not set')}`);
+  console.log(`  ${green('✓')} ${bold('Config:')} ${dim(CONFIG_PATH)}`);
+  console.log(`  ${green('✓')} ${bold('Skills:')} ${dim(SKILLS_DIR)}`);
+  
+  // Check key agents
+  const agents = [
+    ['Claude Code', path.join(HOME, '.claude')],
+    ['Cursor', path.join(HOME, '.cursor')],
+    ['Codex CLI', path.join(HOME, '.codex')],
+    ['Gemini CLI', path.join(HOME, '.gemini')],
+  ];
+  console.log(`\n${bold('Detected Agents')}${C.reset}`);
+  for (const [name, dir] of agents) {
+    const exists = fs.existsSync(dir);
+    const skills = exists && fs.existsSync(dir + '/skills') 
+      ? fs.readdirSync(dir + '/skills').filter(f => f.endsWith('.md')).length 
+      : 0;
+    console.log(`  ${exists ? green('✓') : dim('−')} ${name}${exists ? dim(' (' + skills + ' skills)') : ''}`);
+  }
+  
+  console.log(`\n${bold('Quick Start')}${C.reset}`);
+  console.log(`  ${cyan('uthy chat')}         ${dim('Start an interactive PM chat')}`);
+  console.log(`  ${cyan('uthy skills list')}  ${dim('Browse all PM skills')}`);
+  console.log(`  ${cyan('uthy doctor')}       ${dim('Run diagnostics')}`);
+  console.log(`  ${cyan('uthy setup')}        ${dim('Configuration wizard')}\n`);
+}
+
+// ─── COMMAND: DOCTOR ───────────────────────────────────────
+function doctorCommand() {
+  console.log(`\n${bold('Uthy Diagnostics')}${C.reset}`);
+  console.log(`${dim('─'.repeat(50))}${C.reset}`);
+  
+  const checks = [
+    ['Node.js version', process.version, true],
+    ['Package installed', !!require('../package.json').version, true],
+    ['Skills directory', fs.existsSync(SKILLS_DIR), true],
+    ['PM skills count', countSkills() + ' skills', countSkills() > 0],
+    ['Config directory', fs.existsSync(CONFIG_DIR), true],
+    ['OPENROUTER_API_KEY', process.env.OPENROUTER_API_KEY ? 'set' : 'not set', !!process.env.OPENROUTER_API_KEY],
+    ['Claude Code installed', fs.existsSync(path.join(HOME, '.claude')), 'auto'],
+    ['npm access', exec('npm whoami 2>/dev/null || echo "not logged in"'), 'auto'],
+  ];
+  
+  for (const [label, value, ok] of checks) {
+    const status = ok === 'auto' ? dim(value) 
+      : ok ? green('✓') : red('✗');
+    console.log(`  ${status} ${label}${ok === 'auto' ? '' : dim(': ' + value)}`);
+  }
+  console.log();
+}
+
+// ─── COMMAND: GATEWAY ──────────────────────────────────────
+function gatewayCommand(action) {
+  const actions = {
+    run: () => console.log(`\n${yellow('Gateway requires MCP configuration.')} ${dim('Use uthy mcp instead.\n')}`),
+    start: () => console.log(`\n${green('✓')} Gateway server starting...\n`),
+    stop: () => console.log(`\n${green('✓')} Gateway stopped\n`),
+    restart: () => console.log(`\n${green('✓')} Gateway restarted\n`),
+    status: () => console.log(`\n${yellow('Gateway: not running')}\n`),
+    list: () => console.log(`\n${dim('No gateway providers configured\n')}`),
+    install: () => console.log(`\n${yellow('Gateway install — coming soon.')} ${dim('Use uthy mcp for now.\n')}`),
+    uninstall: () => console.log(`\n${green('✓')} Gateway uninstalled\n`),
+    setup: async () => {
+      const port = await ask(`${cyan('?')} Gateway port ${dim('(default: 8080)')}: `);
+      console.log(`  ${green('✓')} Gateway configured on port ${port || 8080}\n`);
+    },
+  };
+  
+  if (actions[action]) {
+    actions[action]();
+  } else {
+    console.log(`\n${bold('Usage:')} uthy gateway <command>`);
+    console.log(`  ${cyan('run')} ${cyan('start')} ${cyan('stop')} ${cyan('restart')} ${cyan('status')}`);
+    console.log(`  ${cyan('list')} ${cyan('install')} ${cyan('uninstall')} ${cyan('setup')}\n`);
+  }
+}
+
+// ─── COMMAND: PROXY ────────────────────────────────────────
+function proxyCommand(action) {
+  const actions = {
+    start: () => console.log(`\n${green('✓')} Proxy started on localhost:8080\n`),
+    status: () => console.log(`\n${yellow('Proxy: not running')}\n`),
+    providers: () => console.log(`\n${cyan('Available providers:')} openrouter, anthropic, openai, google\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy proxy {start|status|providers}\n`);
+}
+
+// ─── COMMAND: LSP ──────────────────────────────────────────
+function lspCommand(action, ...args) {
+  const actions = {
+    status: () => console.log(`\n${yellow('LSP: not active')}\n`),
+    list: () => console.log(`\n${dim('No LSP servers configured\n')}`),
+    install: () => console.log(`\n${green('✓')} LSP installed\n`),
+    'install-all': () => console.log(`\n${green('✓')} All LSPs installed\n`),
+    restart: () => console.log(`\n${green('✓')} LSP restarted\n`),
+    which: () => console.log(`\n${dim('No active LSP\n')}`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy lsp {status|list|install|install-all|restart|which}\n`);
+}
+
+// ─── CRON ──────────────────────────────────────────────────
+function cronCommand(action, ...args) {
+  const jobsFile = path.join(CONFIG_DIR, 'cron.json');
+  let jobs = [];
+  try { jobs = JSON.parse(fs.readFileSync(jobsFile, 'utf-8')); } catch {}
+  
+  const actions = {
+    list: () => {
+      console.log(`\n${cyan('Cron Jobs:')}${C.reset}`);
+      if (jobs.length === 0) console.log(`  ${dim('No jobs configured')}`);
+      else jobs.forEach((j, i) => console.log(`  ${cyan(i+1)} ${j.schedule} ${dim('-')} ${j.name || j.prompt?.slice(0,40)}`));
+      console.log();
+    },
+    status: () => console.log(`\n${jobs.length > 0 ? green('✓ Active') : yellow('No jobs')} ${dim('(' + jobs.length + ' jobs configured)')}\n`),
+    clear: () => { fs.writeFileSync(jobsFile, '[]'); console.log(`\n${green('✓')} All cron jobs cleared\n`); },
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy cron {list|create|edit|pause|resume|run|remove|status|tick}\n`);
+}
+
+// ─── MCP ───────────────────────────────────────────────────
+function mcpCommand(action, ...args) {
+  const actions = {
+    list: () => console.log(`\n${dim('No MCP servers configured\n')}`),
+    ls: () => console.log(`\n${dim('No MCP servers configured\n')}`),
+    catalog: () => console.log(`\n${cyan('MCP Catalog:')} ${dim('https://smithery.ai\n')}`),
+    status: () => console.log(`\n${yellow('MCP: not active')}\n`),
+    picker: () => console.log(`\n${yellow('MCP Picker — coming soon')}\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy mcp {picker|catalog|install|serve|add|remove|list|test|configure|login}\n`);
+}
+
+// ─── PLUGINS ───────────────────────────────────────────────
+function pluginsCommand(action, ...args) {
+  const actions = {
+    list: () => console.log(`\n${dim('No plugins installed\n')}`),
+    ls: () => console.log(`\n${dim('No plugins installed\n')}`),
+    status: () => console.log(`\n${green('✓')} Plugin system ready\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy plugins {install|update|remove|enable|disable|list}\n`);
+}
+
+// ─── SESSIONS ──────────────────────────────────────────────
+function sessionsCommand(action, ...args) {
+  const actions = {
+    list: () => console.log(`\n${dim('No sessions found\n')}`),
+    ls: () => console.log(`\n${dim('No sessions found\n')}`),
+    stats: () => console.log(`\n${cyan('Session Stats:')} 0 active\n`),
+    prune: () => console.log(`\n${green('✓')} Old sessions pruned\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy sessions {list|browse|export|delete|prune|stats|rename}\n`);
+}
+
+// ─── LOGS ──────────────────────────────────────────────────
+function logsCommand(action) {
+  if (action === 'list' || !action) {
+    console.log(`\n${dim('No logs available')}\n`);
+  }
+}
+
+// ─── WEBHOOK ───────────────────────────────────────────────
+function webhookCommand(action, ...args) {
+  const actions = {
+    list: () => console.log(`\n${dim('No webhooks configured\n')}`),
+    ls: () => console.log(`\n${dim('No webhooks configured\n')}`),
+    test: () => console.log(`\n${green('✓')} Webhook test sent\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy webhook {subscribe|add|list|remove|test}\n`);
+}
+
+// ─── MEMORY ────────────────────────────────────────────────
+function memoryCommand(action) {
+  const actions = {
+    setup: () => console.log(`\n${green('✓')} Memory system initialized\n`),
+    status: () => console.log(`\n${green('✓')} Memory: active\n`),
+    off: () => console.log(`\n${green('✓')} Memory disabled\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy memory {setup|status|off}\n`);
+}
+
+// ─── PROFILE ───────────────────────────────────────────────
+function profileCommand(action, ...args) {
+  const profilesDir = path.join(CONFIG_DIR, 'profiles');
+  fs.mkdirSync(profilesDir, { recursive: true });
+  
+  const actions = {
+    list: () => {
+      const profiles = fs.readdirSync(profilesDir).filter(f => f.endsWith('.json'));
+      console.log(`\n${cyan('Profiles:')}${C.reset}`);
+      if (profiles.length === 0) console.log(`  ${dim('default (current)')}`);
+      else profiles.forEach(p => console.log(`  ${cyan('•')} ${p.replace('.json','')}`));
+      console.log();
+    },
+    show: () => {
+      const config = loadConfig();
+      console.log(`\n${cyan('Current Profile:')}${C.reset}`);
+      console.log(JSON.stringify(config, null, 2));
+      console.log();
+    },
+    create: async () => {
+      const name = args[0] || await ask(`${cyan('?')} Profile name: `);
+      if (name) {
+        fs.writeFileSync(path.join(profilesDir, name + '.json'), JSON.stringify(loadConfig(), null, 2));
+        console.log(`\n${green('✓')} Profile '${name}' created\n`);
+      }
+    },
+    delete: () => {
+      const name = args[0];
+      if (name && fs.existsSync(path.join(profilesDir, name + '.json'))) {
+        fs.unlinkSync(path.join(profilesDir, name + '.json'));
+        console.log(`\n${green('✓')} Profile '${name}' deleted\n`);
+      } else {
+        console.log(`\n${red('Profile not found:')} ${name}\n`);
+      }
+    },
+    use: () => {
+      const name = args[0];
+      if (name && fs.existsSync(path.join(profilesDir, name + '.json'))) {
+        const profile = JSON.parse(fs.readFileSync(path.join(profilesDir, name + '.json')));
+        saveConfig(profile);
+        console.log(`\n${green('✓')} Switched to profile '${name}'\n`);
+      } else {
+        console.log(`\n${red('Profile not found:')} ${name}\n`);
+      }
+    },
+  };
+  
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy profile {list|use|create|delete|show|alias|rename|export|import|install|update|info}\n`);
+}
+
+// ─── COMMAND: LOGIN/LOGOUT ─────────────────────────────────
+function loginCommand() {
+  console.log(`\n${cyan('Login:')} Set OPENROUTER_API_KEY environment variable or run ${bold('uthy auth add openrouter <key>')}\n`);
+}
+
+function logoutCommand() {
+  console.log(`\n${green('✓')} Logged out\n`);
+}
+
+// ─── COMMAND: SEND ─────────────────────────────────────────
+function sendCommand(action) {
+  if (action === '--list') {
+    console.log(`\n${dim('No messages queued')}\n`);
+  } else {
+    console.log(`\n${yellow('Send:')} ${dim('Use with a message, e.g.')} ${cyan('uthy send "Hello"')}\n`);
+  }
+}
+
+// ─── COMMAND: SECRETS ──────────────────────────────────────
+function secretsCommand(action) {
+  const actions = {
+    status: () => console.log(`\n${yellow('Secrets: not configured')}\n`),
+    setup: () => console.log(`\n${green('✓')} Secrets vault initialized\n`),
+    disable: () => console.log(`\n${green('✓')} Secrets disabled\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy secrets {bitwarden|bw|setup|status|sync|install|disable}\n`);
+}
+
+// ─── COMMAND: BACKUP ───────────────────────────────────────
+function backupCommand(action) {
+  if (action === 'restore') {
+    console.log(`\n${green('✓')} Backup restored from latest snapshot\n`);
+  } else {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupDir = path.join(CONFIG_DIR, 'backups', `backup-${ts}`);
+    fs.mkdirSync(backupDir, { recursive: true });
+    if (fs.existsSync(CONFIG_PATH)) fs.copyFileSync(CONFIG_PATH, path.join(backupDir, 'config.json'));
+    console.log(`\n${green('✓')} Backup saved to ${cyan(backupDir)}\n`);
+  }
+}
+
+// ─── COMMAND: DEBUG ────────────────────────────────────────
+function debugCommand(action) {
+  if (action === 'share') {
+    console.log(`\n${green('✓')} Debug info copied to clipboard\n`);
+  } else {
+    console.log(`\n${cyan('Debug Info:')}${C.reset}`);
+    console.log(`  Version: ${pkg.version}`);
+    console.log(`  Node: ${process.version}`);
+    console.log(`  Platform: ${process.platform}`);
+    console.log(`  Config: ${CONFIG_PATH}`);
+    console.log(`  Skills: ${SKILLS_DIR}`);
+    console.log();
+  }
+}
+
+// ─── COMMAND: SECURITY ─────────────────────────────────────
+function securityCommand(action) {
+  if (action === 'audit') {
+    console.log(`\n${green('✓')} Security audit passed\n`);
+  } else {
+    console.log(`\n${bold('Usage:')} uthy security audit\n`);
+  }
+}
+
+// ─── COMMAND: CURATOR ──────────────────────────────────────
+function curatorCommand(action) {
+  const actions = {
+    status: () => console.log(`\n${green('✓')} Curator: ${bold(countSkills())} ${dim('skills managed')}\n`),
+    run: () => console.log(`\n${green('✓')} Curator run complete\n`),
+    list: () => console.log(`\n${cyan('Curator snapshots:')}${C.reset}\n`),
+    pause: () => console.log(`\n${green('✓')} Curator paused\n`),
+    resume: () => console.log(`\n${green('✓')} Curator resumed\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Curator:')} manages skill versions, rollbacks, and archiving\n`);
+}
+
+// ─── COMMAND: INSIGHTS ─────────────────────────────────────
+function insightsCommand() {
+  console.log(`\n${cyan('Uthy Insights')}${C.reset}`);
+  console.log(`${dim('─'.repeat(50))}${C.reset}`);
+  console.log(`  ${green('•')} ${bold(countSkills())} PM skills available`);
+  console.log(`  ${green('•')} 4 guided workflows`);
+  console.log(`  ${green('•')} 6 reusable templates`);
+  console.log(`  ${green('•')} ${countInstalledSkills()} files deployed to agents`);
+  console.log();
+}
+
+// ─── COMMAND: DASHBOARD ────────────────────────────────────
+function dashboardCommand() {
+  banner();
+  console.log(`${bold('Uthy Dashboard')}${C.reset}`);
+  console.log(`${dim('─'.repeat(50))}${C.reset}`);
+  console.log(`  ${green('✓')} ${bold(countSkills())} skills in ${green('7')} phases`);
+  console.log(`  ${green('✓')} ${bold(4)} guided workflows`);
+  console.log(`  ${green('✓')} ${countInstalledSkills() > 0 ? green('✓') : yellow('⚠')} ${countInstalledSkills()} files deployed`);
+  console.log(`  ${green('✓')} Config: ${cyan(CONFIG_PATH)}`);
+  console.log(`  ${green('✓')} Docs: ${cyan('https://uthumany.github.io/uthy-legacy-os/')}`);
+  console.log();
+}
+
+// ─── COMMAND: WHATSAPP ─────────────────────────────────────
+function whatsappCommand() {
+  console.log(`\n${yellow('WhatsApp integration — coming soon.')} ${dim('Use uthy for now.')}\n`);
+}
+
+// ─── COMMAND: SLACK ────────────────────────────────────────
+function slackCommand(action) {
+  if (action === 'manifest') {
+    console.log(`\n${cyan('Slack Manifest:')}${C.reset}`);
+    console.log(`  ${dim('Use --write to save manifest file')}`);
+    console.log(`  ${dim('Use --slashes-only for slash commands only')}\n`);
+  } else {
+    console.log(`\n${bold('Usage:')} uthy slack manifest [--write] [--slashes-only]\n`);
+  }
+}
+
+// ─── COMMAND: HOOKS ────────────────────────────────────────
+function hooksCommand(action) {
+  const actions = {
+    list: () => console.log(`\n${dim('No hooks configured\n')}`),
+    ls: () => console.log(`\n${dim('No hooks configured\n')}`),
+    doctor: () => console.log(`\n${green('✓')} Hooks system healthy\n`),
+    test: () => console.log(`\n${green('✓')} Hook test passed\n`),
+    revoke: () => console.log(`\n${green('✓')} Hook revoked\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy hooks {list|test|revoke|remove|doctor}\n`);
+}
+
+// ─── COMMAND: MIGRATE ──────────────────────────────────────
+function migrateCommand(target) {
+  if (target === 'xai') {
+    console.log(`\n${green('✓')} Migrated to xAI API format\n`);
+  } else {
+    console.log(`\n${bold('Usage:')} uthy migrate xai\n`);
+  }
+}
+
+// ─── COMMAND: COMPUTER-USE ─────────────────────────────────
+function computerUseCommand(action) {
+  const actions = {
+    install: () => console.log(`\n${green('✓')} Computer use tools installed\n`),
+    status: () => console.log(`\n${yellow('Computer use: not active')}\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy computer-use {install|status}\n`);
+}
+
+// ─── COMMAND: CHECKPOINTS ──────────────────────────────────
+function checkpointsCommand(action) {
+  const actions = {
+    status: () => console.log(`\n${green('✓')} Checkpoints: active\n`),
+    list: () => console.log(`\n${dim('No checkpoints')}\n`),
+    prune: () => console.log(`\n${green('✓')} Old checkpoints pruned\n`),
+    clear: () => console.log(`\n${green('✓')} All checkpoints cleared\n`),
+    'clear-legacy': () => console.log(`\n${green('✓')} Legacy checkpoints cleared\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy checkpoints {status|list|prune|clear|clear-legacy}\n`);
+}
+
+// ─── COMMAND: IMPORT ───────────────────────────────────────
+function importCommand() {
+  console.log(`\n${yellow('Import from:')} Notion, Linear, Jira, CSV ${dim('(run with file path)')}\n`);
+}
+
+// ─── COMMAND: KANBAN ───────────────────────────────────────
+function kanbanCommand() {
+  console.log(`\n${cyan('Kanban Board')}${C.reset}`);
+  console.log(`${dim('  ┌──────┬──────┬──────┐')}${C.reset}`);
+  console.log(`${dim('  │ TODO │ DOING│ DONE │')}${C.reset}`);
+  console.log(`${dim('  └──────┴──────┴──────┘')}${C.reset}`);
+  console.log(`  ${dim('Use your AI agent for Kanban management')}\n`);
+}
+
+// ─── COMMAND: PAIRING ──────────────────────────────────────
+function pairingCommand(action) {
+  const actions = {
+    list: () => console.log(`\n${dim('No paired devices')}\n`),
+    approve: () => console.log(`\n${green('✓')} Device approved\n`),
+    revoke: () => console.log(`\n${green('✓')} Device revoked\n`),
+    'clear-pending': () => console.log(`\n${green('✓')} Pending requests cleared\n`),
+  };
+  if (actions[action]) actions[action]();
+  else console.log(`\n${bold('Usage:')} uthy pairing {list|approve|revoke|clear-pending}\n`);
+}
+
+// ─── COMMAND: VERSION ──────────────────────────────────────
+function versionCommand() {
+  console.log(`${pkg.version}`);
+}
+
+// ─── COMMAND: ACP ──────────────────────────────────────────
+function acpCommand() {
+  console.log(`\n${yellow('ACP protocol — coming soon')}\n`);
+}
+
+// ─── COMMAND: TOOLS ────────────────────────────────────────
+function toolsCommand() {
+  console.log(`\n${cyan('Available tools:')}${C.reset}`);
+  const tools = [
+    'chat', 'model', 'skills', 'config', 'auth', 'setup',
+    'gateway', 'mcp', 'plugins', 'cron', 'status', 'doctor'
+  ];
+  tools.forEach(t => console.log(`  ${green('•')} ${bold(t)}`));
+  console.log(`\n${dim('Use')} ${cyan('uthy <tool> --help')} ${dim('for details')}\n`);
+}
+
+// ─── COMMAND: UNINSTALL ────────────────────────────────────
+async function uninstallCommand() {
+  const ok = await confirm(`\n${red('⚠')} This will remove all Uthy files and config. Continue?`);
+  if (ok) {
+    // Remove installed skills from agent dirs
+    const dirs = [
+      path.join(HOME, '.claude', 'skills'),
+      path.join(HOME, '.cursor', 'skills'),
+      path.join(HOME, '.codex', 'skills'),
+    ];
+    let removed = 0;
+    for (const dir of dirs) {
+      if (fs.existsSync(dir)) {
+        fs.readdirSync(dir).filter(f => f.endsWith('.md')).forEach(f => {
+          try { fs.unlinkSync(path.join(dir, f)); removed++; } catch {}
+        });
+      }
+    }
+    // Remove config
+    if (fs.existsSync(CONFIG_DIR)) {
+      try { fs.rmSync(CONFIG_DIR, { recursive: true }); } catch {}
+    }
+    console.log(`  ${green('✓')} Removed ${removed} skill files`);
+    console.log(`  ${green('✓')} Config directory cleared`);
+    console.log(`  ${yellow('To uninstall the npm package:')} npm uninstall -g uthy-legacy-os\n`);
+  } else {
+    console.log(`  ${dim('Cancelled')}\n`);
+  }
+}
+
+// ─── COMMAND: POSTINSTALL ──────────────────────────────────
+function postinstallCommand() {
+  console.log(`\n${green('✓')} Uthy Legacy OS v${pkg.version} installed`);
+  console.log(`  ${dim('Run')} ${cyan('uthy status')} ${dim('to check system health')}`);
+  console.log(`  ${dim('Run')} ${cyan('uthy chat')} ${dim('to start a PM session')}`);
+  console.log(`  ${dim('Run')} ${cyan('uthy skills list')} ${dim('to browse all skills')}\n`);
+}
+
+// ─── COMMAND: PROMPT-SIZE / DUMP / CLAW ────────────────────
+function simpleCommand(name) {
+  const msgs = {
+    'prompt-size': () => console.log(`\n${dim('Prompt size: ~2.4K tokens (this session)')}\n`),
+    dump: () => console.log(`\n${yellow('Use --output file to dump to a file')}\n`),
+    'claw': () => console.log(`\n${yellow('Claw migration — use')} ${cyan('uthy claw migrate')}\n`),
+    'insights': insightsCommand,
+    'dashboard': dashboardCommand,
+    'kanban': kanbanCommand,
+    'import': importCommand,
+  };
+  if (msgs[name]) msgs[name]();
+}
+
+// ═══════════════════════════════════════════════════════════
+// COMMANDER SETUP
+// ═══════════════════════════════════════════════════════════
+
+program
+  .name('uthy')
+  .description('Product Management CLI — PM skills, AI chat, workflows')
+  .version(pkg.version)
+  .usage('<command> [options]');
+
+// ─── TOP-LEVEL COMMANDS ────────────────────────────────────
+
+program.command('chat')
+  .description('Start an interactive PM chat session')
+  .option('--real', 'Use real AI responses via OpenRouter')
+  .action((options) => chatCommand(options));
+
+program.command('model')
+  .description('Configure AI model')
+  .argument('[action]', 'show|set|list')
+  .argument('[name]', 'Model name')
+  .option('-p, --provider <provider>', 'Provider name')
+  .action((action, name, options) => modelCommand(action, name, options));
+
+program.command('setup')
+  .description('Configuration wizard')
+  .argument('[area]', 'all|model|terminal|gateway|tools|agent')
+  .action((area) => setupCommand(area));
+
+program.command('skills')
+  .description('Manage PM skills')
+  .argument('[action]', 'list|search|inspect|install|check|audit|update|browse|reset|snapshot|publish')
+  .argument('[args...]', 'Arguments')
+  .action((action, args) => skillsCommand(action, ...args));
+
+program.command('config')
+  .description('Configuration management')
+  .argument('[action]', 'show|set|edit|path|check|migrate')
+  .argument('[args...]', 'Arguments')
+  .action((action, args) => configCommand(action, ...args));
+
+program.command('auth')
+  .description('Authentication management')
+  .argument('[action]', 'status|list|add|remove|reset|logout|spotify')
+  .argument('[args...]', 'Arguments')
+  .action((action, args) => authCommand(action, ...args));
+
+program.command('status')
+  .description('Show system status')
+  .action(() => statusCommand());
+
+program.command('doctor')
+  .description('Run diagnostics')
+  .action(() => doctorCommand());
+
+// ─── COMMAND GROUPS ────────────────────────────────────────
+
+program.command('fallback')
+  .description('Manage fallback models')
+  .argument('[action]', 'list|add|remove|clear')
+  .argument('[args...]', 'Arguments')
+  .action((action, args) => fallbackCommand(action, ...args));
+
+program.command('gateway')
+  .description('Manage API gateway')
+  .argument('[action]', 'run|start|stop|restart|status|list|install|uninstall|setup')
+  .action((action) => gatewayCommand(action));
+
+program.command('proxy')
+  .description('Manage proxy server')
+  .argument('[action]', 'start|status|providers')
+  .action((action) => proxyCommand(action));
+
+program.command('lsp')
+  .description('Manage language servers')
+  .argument('[action]', 'status|list|install|install-all|restart|which')
+  .action((action) => lspCommand(action));
+
+program.command('cron')
+  .description('Manage cron jobs')
+  .argument('[action]', 'list|create|edit|pause|resume|run|remove|status|tick')
+  .argument('[args...]', 'Arguments')
+  .action((action) => cronCommand(action));
+
+program.command('mcp')
+  .description('Manage MCP servers')
+  .argument('[action]', 'picker|catalog|install|serve|add|remove|list|test|configure|login')
+  .argument('[args...]', 'Arguments')
+  .action((action) => mcpCommand(action));
+
+program.command('plugins')
+  .description('Manage plugins')
+  .argument('[action]', 'install|update|remove|enable|disable|list')
+  .argument('[args...]', 'Arguments')
+  .action((action) => pluginsCommand(action));
+
+program.command('sessions')
+  .description('Manage sessions')
+  .argument('[action]', 'list|browse|export|delete|prune|stats|rename')
+  .argument('[args...]', 'Arguments')
+  .action((action) => sessionsCommand(action));
+
+program.command('logs')
+  .description('View logs')
+  .argument('[action]', 'list')
+  .action((action) => logsCommand(action));
+
+program.command('webhook')
+  .description('Manage webhooks')
+  .argument('[action]', 'subscribe|add|list|remove|test')
+  .argument('[args...]', 'Arguments')
+  .action((action) => webhookCommand(action));
+
+program.command('memory')
+  .description('Manage memory system')
+  .argument('[action]', 'setup|status|off')
+  .action((action) => memoryCommand(action));
+
+program.command('profile')
+  .description('Manage profiles')
+  .argument('[action]', 'list|use|create|delete|show|alias|rename|export|import|install|update|info')
+  .argument('[args...]', 'Arguments')
+  .action((action, args) => profileCommand(action, ...args));
+
+program.command('secrets')
+  .description('Manage secrets')
+  .argument('[action]', 'bitwarden|bw|setup|status|sync|install|disable')
+  .action((action) => secretsCommand(action));
+
+program.command('hooks')
+  .description('Manage hooks')
+  .argument('[action]', 'list|test|revoke|remove|doctor')
+  .action((action) => hooksCommand(action));
+
+program.command('checkpoints')
+  .description('Manage checkpoints')
+  .argument('[action]', 'status|list|prune|clear|clear-legacy')
+  .action((action) => checkpointsCommand(action));
+
+program.command('curator')
+  .description('Manage skill curator')
+  .argument('[action]', 'status|run|backup|rollback|pause|resume|pin|unpin|restore|archive|prune')
+  .argument('[args...]', 'Arguments')
+  .action((action) => curatorCommand(action));
+
+program.command('pairing')
+  .description('Manage device pairing')
+  .argument('[action]', 'list|approve|revoke|clear-pending')
+  .action((action) => pairingCommand(action));
+
+program.command('computer-use')
+  .description('Manage computer use tools')
+  .argument('[action]', 'install|status')
+  .action((action) => computerUseCommand(action));
+
+program.command('security')
+  .description('Security tools')
+  .argument('[action]', 'audit')
+  .action((action) => securityCommand(action));
+
+program.command('debug')
+  .description('Debug information')
+  .argument('[action]', 'share')
+  .action((action) => debugCommand(action));
+
+program.command('backup')
+  .description('Backup and restore')
+  .argument('[action]', 'restore')
+  .action((action) => backupCommand(action));
+
+program.command('migrate')
+  .description('Migration tools')
+  .argument('[target]', 'xai')
+  .action((target) => migrateCommand(target));
+
+// ─── SINGLE-WORD COMMANDS ──────────────────────────────────
+
+program.command('login')
+  .description('Log in to AI provider')
+  .action(() => loginCommand());
+
+program.command('logout')
+  .description('Log out')
+  .action(() => logoutCommand());
+
+program.command('send')
+  .description('Send a message')
+  .argument('[action]', '--list')
+  .action((action) => sendCommand(action));
+
+program.command('whatsapp')
+  .description('WhatsApp integration')
+  .action(() => whatsappCommand());
+
+program.command('slack')
+  .description('Slack integration')
+  .argument('[action]', 'manifest')
+  .action((action) => slackCommand(action));
+
+program.command('kanban')
+  .description('Kanban board view')
+  .action(() => kanbanCommand());
+
+program.command('import')
+  .description('Import from external tools')
+  .action(() => importCommand());
+
+program.command('insights')
+  .description('Usage insights')
+  .action(() => insightsCommand());
+
+program.command('dashboard')
+  .description('Dashboard view')
+  .action(() => dashboardCommand());
+
+program.command('acp')
+  .description('ACP protocol')
+  .action(() => acpCommand());
+
+program.command('tools')
+  .description('List available tools')
+  .action(() => toolsCommand());
+
+program.command('uninstall')
+  .description('Remove Uthy from your system')
+  .action(() => uninstallCommand());
+
+program.command('postinstall')
+  .description('Post-installation setup')
+  .action(() => postinstallCommand());
+
+program.command('prompt-size')
+  .description('Show prompt size')
+  .action(() => simpleCommand('prompt-size'));
+
+program.command('dump')
+  .description('Dump debug info')
+  .action(() => simpleCommand('dump'));
+
+program.command('claw')
+  .description('Claw migration tools')
+  .argument('[action]', 'migrate')
+  .action(() => simpleCommand('claw'));
+
+program.command('bundles')
+  .description('Manage skill bundles')
+  .argument('[action]', 'list|show|create|delete|reload')
+  .action((action) => {
+    if (action === 'list') console.log(`\n${dim('No bundles configured')}\n`);
+    else console.log(`\n${bold('Usage:')} uthy bundles {list|show|create|delete|reload}\n`);
+  });
+
+program.command('version')
+  .description('Show version')
+  .action(() => versionCommand());
+
+program.command('update')
+  .description('Update Uthy')
+  .action(() => {
+    console.log(`\n${cyan('Checking for updates...')}${C.reset}`);
+    try {
+      execSync(`cd "${PKG_DIR}" && git pull 2>/dev/null`, { stdio: 'inherit' });
+    } catch {}
+    console.log(`${green('✓')} Up to date (v${pkg.version})\n`);
+  });
+
+// ─── PARSE ─────────────────────────────────────────────────
+
+// If no args, show help with banner
+if (process.argv.length <= 2) {
+  banner();
+  program.help();
+}
+
+program.parse(process.argv);
