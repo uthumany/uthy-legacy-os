@@ -1177,15 +1177,222 @@ function acpCommand() {
   console.log(`\n${yellow('ACP protocol — coming soon')}\n`);
 }
 
-// ─── COMMAND: TOOLS ────────────────────────────────────────
-function toolsCommand() {
-  console.log(`\n${cyan('Available tools:')}${C.reset}`);
-  const tools = [
-    'chat', 'model', 'skills', 'config', 'auth', 'setup',
-    'gateway', 'mcp', 'plugins', 'cron', 'status', 'doctor'
+// ─── COMMAND: TOOL (interactive launcher) ─────────────────
+function toolCommand(toolName) {
+  if (toolName) {
+    // Direct tool launch: uthy tool <name>
+    const toolMap = {
+      'chat': () => chatCommand({ real: false }),
+      'skills': () => skillsCommand('list'),
+      'config': () => configCommand('show'),
+      'model': () => modelCommand('show'),
+      'auth': () => authCommand('status'),
+      'setup': () => setupCommand('all'),
+      'status': () => statusCommand(),
+      'doctor': () => doctorCommand(),
+      'dashboard': () => dashboardCommand(),
+      'insights': () => insightsCommand(),
+      'kanban': () => kanbanCommand(),
+      'gateway': () => gatewayCommand('status'),
+      'mcp': () => mcpCommand('list'),
+      'plugins': () => pluginsCommand('list'),
+      'cron': () => cronCommand('list'),
+      'sessions': () => sessionsCommand('list'),
+      'logs': () => logsCommand('list'),
+      'memory': () => memoryCommand('status'),
+      'profile': () => profileCommand('show'),
+      'secrets': () => secretsCommand('status'),
+      'hooks': () => hooksCommand('list'),
+      'checkpoints': () => checkpointsCommand('list'),
+      'curator': () => curatorCommand('status'),
+      'fallback': () => fallbackCommand('list'),
+      'backup': () => backupCommand(),
+      'debug': () => debugCommand(),
+      'security': () => securityCommand('audit'),
+    };
+    if (toolMap[toolName]) {
+      toolMap[toolName]();
+    } else {
+      console.log(`\n${red('Unknown tool:')} ${toolName}${C.reset}`);
+      console.log(`  ${dim('Run')} ${cyan('uthy tool')} ${dim('to see all available tools')}\n`);
+    }
+    return;
+  }
+
+  // Interactive mode: uthy tool (no args)
+  const TOOLS = [
+    { id: 'chat',       icon: '💬',  name: 'Chat',          desc: 'Interactive PM chat session',                color: 'green' },
+    { id: 'skills',     icon: '🧠',  name: 'Skills',        desc: 'Browse, search, inspect PM skills',           color: 'cyan' },
+    { id: 'setup',      icon: '⚙️',  name: 'Setup',         desc: 'Configuration wizard',                        color: 'yellow' },
+    { id: 'model',      icon: '🤖',  name: 'Model',         desc: 'Configure AI model & provider',               color: 'magenta' },
+    { id: 'config',     icon: '🔧',  name: 'Config',        desc: 'View, set, edit configuration',               color: 'blue' },
+    { id: 'auth',       icon: '🔑',  name: 'Auth',          desc: 'Authentication & API keys',                   color: 'red' },
+    { id: 'status',     icon: '📊',  name: 'Status',        desc: 'System health overview',                      color: 'green' },
+    { id: 'doctor',     icon: '🏥',  name: 'Doctor',        desc: 'Run full diagnostics',                        color: 'cyan' },
+    { id: 'dashboard',  icon: '📈',  name: 'Dashboard',     desc: 'PM dashboard with skill stats',               color: 'yellow' },
+    { id: 'insights',   icon: '💡',  name: 'Insights',      desc: 'Usage insights & metrics',                    color: 'magenta' },
+    { id: 'kanban',     icon: '📋',  name: 'Kanban',        desc: 'Visual kanban board',                         color: 'blue' },
+    { id: 'fallback',   icon: '🔄',  name: 'Fallback',      desc: 'Manage fallback models',                      color: 'green' },
+    { id: 'gateway',    icon: '🌐',  name: 'Gateway',       desc: 'API gateway management',                      color: 'cyan' },
+    { id: 'memory',     icon: '🧩',  name: 'Memory',        desc: 'Memory system status',                        color: 'yellow' },
+    { id: 'profile',    icon: '👤',  name: 'Profile',       desc: 'Manage profiles',                             color: 'magenta' },
+    { id: 'secrets',    icon: '🔒',  name: 'Secrets',       desc: 'Secrets vault',                               color: 'red' },
+    { id: 'cron',       icon: '⏰',  name: 'Cron',          desc: 'Scheduled jobs',                              color: 'blue' },
+    { id: 'plugins',    icon: '🔌',  name: 'Plugins',       desc: 'Plugin management',                           color: 'green' },
+    { id: 'mcp',        icon: '🔗',  name: 'MCP',           desc: 'MCP server management',                       color: 'cyan' },
+    { id: 'sessions',   icon: '📁',  name: 'Sessions',      desc: 'Session browser',                             color: 'yellow' },
+    { id: 'logs',       icon: '📝',  name: 'Logs',          desc: 'View logs',                                   color: 'magenta' },
+    { id: 'hooks',      icon: '🪝',  name: 'Hooks',         desc: 'Event hooks',                                 color: 'blue' },
+    { id: 'checkpoints',icon: '💾',  name: 'Checkpoints',   desc: 'Save/restore checkpoints',                    color: 'green' },
+    { id: 'curator',    icon: '🎯',  name: 'Curator',       desc: 'Skill curator & versioning',                  color: 'cyan' },
+    { id: 'backup',     icon: '📦',  name: 'Backup',        desc: 'Backup & restore',                            color: 'yellow' },
+    { id: 'debug',      icon: '🐛',  name: 'Debug',         desc: 'Debug information',                           color: 'red' },
+    { id: 'security',   icon: '🛡️',  name: 'Security',      desc: 'Security audit',                              color: 'magenta' },
   ];
-  tools.forEach(t => console.log(`  ${green('•')} ${bold(t)}`));
-  console.log(`\n${dim('Use')} ${cyan('uthy <tool> --help')} ${dim('for details')}\n`);
+
+  function drawToolDashboard() {
+    console.clear();
+    const config = loadConfig();
+    
+    // Header
+    console.log(`
+${cyan('╔══════════════════════════════════════════════════════════════╗')}
+${cyan('║')}  ${bold('UTHY TOOL LAUNCHER')}${' '.repeat(35)}${dim('v' + pkg.version)}${cyan(' ║')}
+${cyan('║')}  ${dim('Select a tool below. Type its number or name to launch.')}  ${cyan('║')}
+${cyan('║')}  ${dim('Type')} ${yellow('/exit')} ${dim('to quit.')}${' '.repeat(39)}${cyan('║')}
+${cyan('╚══════════════════════════════════════════════════════════════╝')}
+${C.reset}`);
+
+    // Status bar
+    const model = config.model || dim('not set');
+    const skills = countSkills();
+    const installed = countInstalledSkills();
+    console.log(`  ${dim('Model:')} ${bold(model)}  ${dim('Skills:')} ${bold(skills)}  ${dim('Deployed:')} ${bold(installed)}  ${dim('Config:')} ${cyan(CONFIG_PATH)}`);
+    console.log(`  ${dim('─'.repeat(58))}${C.reset}\n`);
+
+    // Tool grid — 3 columns
+    const cols = 3;
+    const rows = Math.ceil(TOOLS.length / cols);
+    for (let r = 0; r < rows; r++) {
+      let line = '';
+      for (let c = 0; c < cols; c++) {
+        const idx = r + c * rows;
+        if (idx >= TOOLS.length) break;
+        const t = TOOLS[idx];
+        const num = String(idx + 1).padStart(2, ' ');
+        const name = t.id.padEnd(14, ' ');
+        const desc = t.desc.slice(0, 28).padEnd(28, ' ');
+        line += `  ${cyan(num + '.')} ${t.icon} ${bold(name)}${dim(desc)}`;
+      }
+      console.log(line);
+    }
+    console.log(`\n  ${dim('─'.repeat(58))}${C.reset}`);
+    console.log(`  ${yellow('/exit')}  ${dim('Return to shell')}${' '.repeat(20)}${yellow('/help')}  ${dim('Show all tools with descriptions')}`);
+    console.log();
+  }
+
+  // Help panel
+  function showHelp() {
+    console.clear();
+    console.log(`\n${bold('ALL TOOLS')}${C.reset}`);
+    console.log(`${dim('─'.repeat(58))}${C.reset}\n`);
+    TOOLS.forEach((t, i) => {
+      const num = String(i + 1).padStart(2, ' ');
+      console.log(`  ${cyan(num + '.')} ${t.icon} ${bold(t.id.padEnd(16))}${t.desc}`);
+    });
+    console.log(`\n  ${dim('You can also run any tool directly:')}`);
+    console.log(`  ${cyan('uthy tool <name>')}  ${dim('e.g.')} ${green('uthy tool chat')}`);
+    console.log(`  ${cyan('uthy tool')}          ${dim('Open this interactive launcher')}`);
+    console.log();
+    ask(`${cyan('?')} Press Enter to return `).then(() => run());
+  }
+
+  // Tool detail view
+  function showToolDetail(t) {
+    console.clear();
+    console.log(`\n${bold(t.icon + ' ' + t.name)}${C.reset}`);
+    console.log(`${dim('─'.repeat(42))}${C.reset}`);
+    console.log(`  ${cyan('ID:')}      ${t.id}`);
+    console.log(`  ${cyan('Desc:')}    ${t.desc}`);
+    console.log(`  ${cyan('Launch:')}  ${green('uthy tool ' + t.id)} ${dim('or')} ${green('uthy-pm ' + t.id)}`);
+    console.log(`\n${dim('Press Enter to launch, or type')} ${yellow('b')} ${dim('to go back')}${C.reset}\n`);
+    ask(`${cyan('❯')} `).then(answer => {
+      if (answer.toLowerCase() === 'b' || answer === '') {
+        run();
+      } else {
+        // Launch the tool
+        const toolFunc = TOOLS.find(x => x.id === t.id);
+        if (toolFunc) {
+          const toolMap = {
+            'chat': chatCommand, 'skills': () => skillsCommand('list'),
+            'setup': () => setupCommand('all'), 'model': () => modelCommand('show'),
+            'config': () => configCommand('show'), 'auth': () => authCommand('status'),
+            'status': statusCommand, 'doctor': doctorCommand,
+            'dashboard': dashboardCommand, 'insights': insightsCommand,
+            'kanban': kanbanCommand, 'fallback': () => fallbackCommand('list'),
+            'gateway': () => gatewayCommand('status'), 'memory': () => memoryCommand('status'),
+            'profile': () => profileCommand('show'), 'secrets': () => secretsCommand('status'),
+            'cron': () => cronCommand('list'), 'plugins': () => pluginsCommand('list'),
+            'mcp': () => mcpCommand('list'), 'sessions': () => sessionsCommand('list'),
+            'logs': () => logsCommand('list'), 'hooks': () => hooksCommand('list'),
+            'checkpoints': () => checkpointsCommand('list'), 'curator': () => curatorCommand('status'),
+            'backup': backupCommand, 'debug': debugCommand, 'security': () => securityCommand('audit'),
+          };
+          const fn = toolMap[t.id];
+          if (fn) {
+            fn();
+            console.log(`\n${dim('─'.repeat(42))}${C.reset}`);
+            console.log(`${dim('Press Enter to return to tool launcher')}${C.reset}`);
+            ask('').then(() => run());
+          } else {
+            run();
+          }
+        }
+      }
+    });
+  }
+
+  function run() {
+    drawToolDashboard();
+    ask(`${cyan('❯')} `).then(input => {
+      const trimmed = input.trim().toLowerCase();
+
+      if (!trimmed || trimmed === '/exit' || trimmed === '/quit') {
+        console.log(`\n${cyan('◇')} Tool launcher closed.\n`);
+        process.exit(0);
+        return;
+      }
+
+      if (trimmed === '/help') {
+        showHelp();
+        return;
+      }
+
+      if (trimmed === '/clear' || trimmed === 'c') {
+        run();
+        return;
+      }
+
+      // Check by number
+      const num = parseInt(trimmed);
+      if (!isNaN(num) && num >= 1 && num <= TOOLS.length) {
+        showToolDetail(TOOLS[num - 1]);
+        return;
+      }
+
+      // Check by name
+      const tool = TOOLS.find(t => t.id === trimmed || t.id.startsWith(trimmed));
+      if (tool) {
+        showToolDetail(tool);
+        return;
+      }
+
+      console.log(`\n  ${red('Unknown:')} "${trimmed}" ${dim('Type a number, name, or')} ${yellow('/help')}${C.reset}`);
+      ask(`${dim('Press Enter to continue')} `).then(() => run());
+    });
+  }
+
+  run();
 }
 
 // ─── COMMAND: UNINSTALL ────────────────────────────────────
@@ -1459,9 +1666,14 @@ program.command('acp')
   .description('ACP protocol')
   .action(() => acpCommand());
 
+program.command('tool')
+  .description('Interactive tool launcher — pick and run any PM tool')
+  .argument('[tool-name]', 'Launch a specific tool directly')
+  .action((name) => toolCommand(name));
+
 program.command('tools')
-  .description('List available tools')
-  .action(() => toolsCommand());
+  .description('Alias for uthy tool')
+  .action(() => toolCommand());
 
 program.command('uninstall')
   .description('Remove Uthy from your system')
