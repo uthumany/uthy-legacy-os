@@ -1,0 +1,7 @@
+# GitHub Pages Config
+title: Uthy Legacy OS
+description: 30 battle-tested product management skills for AI coding agents
+theme: jekyll-theme-modernist
+markdown: kramdown
+highlighter: rouge
+permalink: pretty

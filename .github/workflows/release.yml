@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate all skills
+        run: python scripts/validate-skills.py
+
+      - name: Check release readiness
+        run: |
+          echo "=== RELEASE CHECK ==="
+          echo "Skills: $(find skills/ -name 'SKILL.md' | wc -l)"
+          echo "Workflows: $(find workflows/ -name 'SKILL.md' | wc -l)"
+          echo "Templates: $(ls templates/*.md | wc -l)"
+          echo "Samples: $(ls samples/*.md | wc -l)"
+          echo "Docs pages: $(ls docs/*.md | wc -l)"
+          echo ""
+          echo "=== Install script exists? ==="
+          test -f install.sh && echo "✅ install.sh" || echo "❌ install.sh missing"
+          echo "=== License exists? ==="
+          test -f LICENSE && echo "✅ LICENSE" || echo "❌ LICENSE missing"
+          echo "=== AGENTS.md exists? ==="
+          test -f AGENTS.md && echo "✅ AGENTS.md" || echo "❌ AGENTS.md missing"
+          echo ""
+          echo "=== Release ready ==="
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            install.sh

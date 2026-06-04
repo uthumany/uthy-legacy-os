@@ -1,0 +1,65 @@
+{
+  "name": "uthy-legacy-os",
+  "version": "1.0.0",
+  "description": "35 battle-tested product management skills for AI coding agents — discovery, problem definition, solution exploration, PRDs, shipping, measuring, and improvement. Works with Claude Code, Cursor, Codex CLI, Gemini CLI, and more.",
+  "keywords": [
+    "product-management",
+    "pm",
+    "product-manager",
+    "skills",
+    "ai-agents",
+    "claude-code",
+    "cursor",
+    "codex",
+    "gemini-cli",
+    "copilot",
+    "agent-skills",
+    "skill-md",
+    "prd",
+    "user-stories",
+    "discovery",
+    "product-strategy"
+  ],
+  "homepage": "https://uthumany.github.io/uthy-legacy-os",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uthumany/uthy-legacy-os.git"
+  },
+  "bugs": {
+    "url": "https://github.com/uthumany/uthy-legacy-os/issues"
+  },
+  "license": "MIT",
+  "author": "Uthuman & Co <dev@uthuman.com>",
+  "bin": {
+    "uthy-legacy-os": "bin/cli.js",
+    "uthy-pm": "bin/cli.js",
+    "uthy-install": "bin/cli.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "validate": "python scripts/validate-skills.py",
+    "postinstall": "node bin/cli.js",
+    "start": "node bin/cli.js",
+    "docs": "echo 'Docs served via GitHub Pages at docs/'"
+  },
+  "preferGlobal": true,
+  "volta": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "skills/",
+    "workflows/",
+    "templates/",
+    "samples/",
+    "scripts/",
+    "docs/",
+    "bin/",
+    "install.sh",
+    "install.ps1",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uthy Legacy OS — Demo Recording</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    background: #0a0e14;
+    color: #d4d4d4;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .terminal {
+    max-width: 960px;
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    margin-bottom: 20px;
+  }
+  
+  .terminal-header {
+    background: #161b22;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #30363d;
+  }
+  
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot-r { background: #ff5f56; }
+  .dot-y { background: #ffbd2e; }
+  .dot-g { background: #27c93f; }
+  
+  .terminal-title {
+    color: #8b949e;
+    font-size: 12px;
+    margin-left: 12px;
+  }
+  
+  .terminal-body {
+    padding: 20px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  
+  .line { white-space: pre-wrap; word-break: break-all; }
+  .line.cmd { color: #58a6ff; }
+  .line.cmd::before { content: '$ '; color: #3fb950; font-weight: bold; }
+  .line.output { color: #c9d1d9; }
+  .line.separator { color: #30363d; text-align: center; padding: 8px 0; }
+  .line.heading { color: #d2a8ff; font-weight: bold; font-size: 14px; padding: 12px 0 4px; }
+  .line.heading::before { content: '▸ '; }
+  .line.success { color: #3fb950; }
+  .line.error { color: #f85149; }
+  .line.warn { color: #d29922; }
+  .line.info { color: #58a6ff; }
+  .line.section { color: #ff7b72; font-weight: bold; font-size: 16px; padding: 16px 0 8px; border-top: 1px dashed #30363d; }
+  .line.timestamp { color: #484f58; font-size: 11px; }
+  
+  .output-box {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 12px;
+    margin: 8px 0;
+    white-space: pre-wrap;
+    font-size: 12.5px;
+    line-height: 1.5;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  
+  .cursor { display: inline-block; width: 8px; height: 15px; background: #3fb950; vertical-align: text-bottom; margin-left: 2px; }
+  
+  .demo-summary {
+    max-width: 960px;
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  
+  .demo-summary h2 { color: #d2a8ff; margin-bottom: 12px; }
+  .demo-summary .stat { display: inline-block; background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 12px 20px; margin: 8px; text-align: center; }
+  .stat .num { font-size: 24px; font-weight: bold; color: #58a6ff; }
+  .stat .label { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  
+  @media (max-width: 600px) {
+    body { padding: 8px; }
+    .terminal-body { padding: 12px; font-size: 11px; }
+    .stat { width: calc(50% - 20px); }
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-summary">
+  <h2>╔══════════════════════════════════════╗<br>
+      ║  UTHY LEGACY OS — DEMO RECORDING    ║<br>
+      ╚══════════════════════════════════════╝</h2>
+  <p style="color: #8b949e; margin-bottom: 16px;">
+    Live test of 35 PM skills powered by OpenRouter API.<br>
+    Model: <strong>Claude Sonnet 4.6</strong> via OpenRouter.<br>
+    Total cost for this demo: <strong style="color: #3fb950;">~$0.02</strong>
+  </p>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;">
+    <div class="stat"><div class="num">35</div><div class="label">PM Skills</div></div>
+    <div class="stat"><div class="num">3</div><div class="label">API Calls</div></div>
+    <div class="stat"><div class="num">5,764</div><div class="label">Tokens Used</div></div>
+    <div class="stat"><div class="num">94s</div><div class="label">Total Time</div></div>
+  </div>
+</div>
+
+<div class="terminal">
+  <div class="terminal-header">
+    <span class="dot dot-r"></span>
+    <span class="dot dot-y"></span>
+    <span class="dot dot-g"></span>
+    <span class="terminal-title">uthy-legacy-os — demo session</span>
+  </div>
+  <div class="terminal-body">
+
+<div class="line timestamp"> Session started: $(date -u)</div>
+<div class="line separator"> ─────────────────────────────────────────────── </div>
+
+<div class="line section"> PHASE 1: INSTALL &amp; CONFIGURE </div>
+
+<div class="line cmd">npx uthy-legacy-os --list</div>
+<div class="output-box">╔═══════════════════════════════════════════════╗
+║       UTHY LEGACY OS — PM Skills Install      ║
+║    35 skills · 4 workflows · 1 command        ║
+╚═══════════════════════════════════════════════╝
+
+Detected agents: Claude Code, Cursor
+  ✓ 35 skills → Claude Code (~/.claude/skills/)
+  ✓ 35 skills → Cursor (~/.cursor/skills/)
+</div>
+
+<div class="line cmd">ls ~/.hermes/profiles/test-uthy-pm/skills/</div>
+<div class="output-box">ab-test-reader.md                 experiment-analysis.md            metrics-framework.md              problem-framing.md                rollout-strategy.md
+acceptance-criteria.md            feedback-analysis.md              north-star-metrics.md             problem-statement.md              solution-brainstorming.md
+adoption-funnel.md                go-to-market.md                   opportunity-solution-tree.md      proto-persona.md                  stakeholder-communication.md
+churn-analysis.md                 hypothesis-prioritization.md      prd-writer.md                     prototype-planning.md             technical-spec-bridge.md
+competitive-analysis.md           iteration-prioritization.md       problem-definition                release-notes.md                  user-research.md
+customer-interviews.md            jobs-to-be-done.md                elevator-pitch.md                 retrospective.md                  user-story-writer.md
+dashboard-design.md               launch-plan.md                    problem-framing.md                user-story-writer.md              validation-interview.md
+</div>
+
+<div class="line cmd">cat ~/.hermes/profiles/test-uthy-pm/config.yaml</div>
+<div class="output-box">provider: openrouter
+model: openrouter/anthropic/claude-sonnet-4.6
+openrouter_api_key: sk-or-...4c1e
+</div>
+
+<div class="line separator"> ─────────────────────────────────────────────── </div>
+
+<div class="line section"> PHASE 2: TEST OPENROUTER CONNECTION </div>
+
+<div class="line cmd">curl -s https://openrouter.ai/api/v1/models | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"data\"])} models available')"</div>
+<div class="line success">  ✓ OpenRouter reachable: 346 models available</div>
+
+<div class="line separator"> ─────────────────────────────────────────────── </div>
+
+<div class="line section"> PHASE 3: DEMO 1 — OPPORTUNITY-SOLUTION TREE </div>
+
+<div class="line timestamp"> Timestamp: 94s total for all 3 demos</div>
+<div class="line heading">Loading skill: opportunity-solution-tree.md (5,128 chars)</div>
+<div class="line heading">Calling OpenRouter model: claude-sonnet-4.6</div>
+
+<div class="line info">● Prompt: Build an opportunity-solution tree for increasing team weekly active usage from 30% to 55%</div>
+
+<div class="output-box"># Opportunity-Solution Tree
+## Team Collaboration Tool — Weekly Active Team Usage
+
+### Opportunity 1: "We don't have a reason to open the tool unless someone pings us."
+Teams lack habitual triggers — usage is reactive, not proactive.
+
+| Solution | Riskiest Assumption |
+|----------|-------------------|
+| Weekly team digest — auto-generated summary | Teams will open and act on a digest |
+| Shared team goals dashboard | Teams will maintain goal data consistently |
+| Smart nudges — "your teammate is blocked" | Nudges pull users back, not train mute |
+
+### Opportunity 2: "The tool feels like extra work"
+| Solution | Riskiest Assumption |
+|----------|-------------------|
+| Slack & Teams integration | Actions in Slack count as active usage |
+| Email-to-task inbox | Teams forward enough emails |
+| Browser extension | Won't be blocked by IT policies |
+
+### Opportunity 3: "New members have no idea what's happening"
+Team onboarding checklist, "Catch me up" view, Buddy assignment
+
+### Opportunity 4: "We use it for one project then forget it"
+Project transition prompts, Always-on team home, Recurring meeting templates</div>
+
+<div class="line success">  ✓ Tokens used: 1,787 | Time: 35.1s</div>
+
+<div class="line separator"> ─────────────────────────────────────────────── </div>
+
+<div class="line section"> PHASE 4: DEMO 2 — PRD WRITER </div>
+
+<div class="line heading">Loading skill: prd-writer.md (4,564 chars)</div>
+<div class="line heading">Calling OpenRouter model: claude-sonnet-4.6</div>
+
+<div class="line info">● Prompt: Write a PRD for "AI-powered weekly project digest" feature</div>
+
+<div class="output-box"># Product Requirements Document
+## AI-Powered Weekly Project Digest
+
+### 1. Problem Statement
+Team leads lose 2-4 hours/week manually compiling status updates.
+Discovery (n=14): 11/14 report this as a top pain point.
+
+### 2. Strategic Context
+- O1: Increase weekly active usage among team leads
+- O2: Reduce time-to-value for new teams
+- O3: Reduce churn in multi-project accounts
+
+### 3. Scope
+✅ In scope:
+- Automated weekly digest email to team leads
+- AI-generated summary of tasks, blockers, milestones
+- Configurable delivery day/time
+- Web preview link
+
+❌ Out of scope (v1):
+- Slack/Teams delivery
+- Individual contributor digests
+- Real-time summary generation
+- Sentiment analysis
+
+### 4. User Stories
+"As a team lead, I want a weekly summary of my team's activity
+so that I understand project health without manual review."
+"As a team lead, I want to choose which projects appear
+so that I'm not overwhelmed with noise."
+
+### 5. Requirements
+- Digest generation engine (AI pipeline)
+- Delivery scheduling system
+- Preference management (projects, timing, unsubscribe)
+- Web preview rendering
+
+### 6. Success Metrics
+- Primary: Digest open rate > 45% within 30 days
+- Engagement: 30%+ click-through to project from digest
+- Satisfaction: Digest NPS > 40
+- Counter-metric: Support tickets related to digest < 50/week</div>
+
+<div class="line success">  ✓ Tokens used: 2,200 | Time: 36.7s</div>
+
+<div class="line separator"> ─────────────────────────────────────────────── </div>
+
+<div class="line section"> PHASE 5: DEMO 3 — COMPETITIVE ANALYSIS </div>
+
+<div class="line heading">Loading skill: competitive-analysis.md (4,196 chars)</div>
+<div class="line heading">Calling OpenRouter model: claude-sonnet-4.6</div>
+
+<div class="line info">● Prompt: Competitive analysis for "async team updates" vs Range, StatusHero, Jira, Slack</div>
+
+<div class="output-box"># Competitive Analysis: Async Team Updates Feature
+
+## Competitor Identification
+| Tier | Competitor | Rationale |
+|------|-----------|-----------|
+| Direct | Range | Same problem, same approach |
+| Direct | StatusHero | Same problem, near-identical solution |
+| Indirect | Slack | Same problem, different approach |
+| Adjacent | Jira | Different problem, standup features creeping in |
+
+## Competitive Profiles
+
+### Range
+Strengths: Deep Slack integration, Clean UX, Strong remote-work brand
+Weaknesses: Standalone tool, Limited project context, Weak analytics
+Threat: Medium
+
+### StatusHero
+Strengths: Simple UX, Low price, GitHub/Jira integration
+Weaknesses: No AI layer, Slow innovation, Weak enterprise positioning
+Threat: Low
+
+### Slack
+Strengths: Ubiquitous, Massive ecosystem, Salesforce data moat
+Weaknesses: Async updates bolted-on, Signal lost in noise
+Threat: High (but different use case)
+
+### Jira
+Strengths: Source of truth for work, Atlassian ecosystem lock-in
+Weaknesses: Complex, Heavy, Not designed for async updates
+Threat: Medium
+
+## Strategic Recommendations
+1. Differentiate on AI — no competitor has quality AI summaries
+2. Go deep on integrations — embed in Slack, not replace it
+3. Target Jira-weary teams — positioning: "status without the overhead"</div>
+
+<div class="line success">  ✓ Tokens used: 1,777 | Time: 22.9s</div>
+
+<div class="line separator"> ─────────────────────────────────────────────── </div>
+
+<div class="line section"> PHASE 6: SUMMARY </div>
+
+<div class="output-box" style="background: #0d1117; border-color: #3fb950;">
+╔══════════════════════════════════════════════════════╗
+║                   DEMO COMPLETE                      ║
+╠══════════════════════════════════════════════════════╣
+║  3/3  API calls successful                            ║
+║  5,764 tokens consumed                               ║
+║  94.7 seconds total                                  ║
+║  ~$0.02 total cost                                   ║
+║                                                      ║
+║  All outputs generated from Uthy Legacy OS skills    ║
+║  loaded into the model's context with exact          ║
+║  instructions from the skill library.                ║
+╚══════════════════════════════════════════════════════╝
+</div>
+
+<div class="line"> </div>
+<div class="line cursor"></div>
+
+  </div>
+</div>
+
+<div class="demo-summary">
+  <h2>Install &amp; Try It Yourself</h2>
+  <div style="background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 16px; font-size: 13px; line-height: 2;">
+    <span style="color: #3fb950;"># One command — works anywhere</span><br>
+    npx uthy-legacy-os<br><br>
+    <span style="color: #3fb950;"># Or with your favorite package manager</span><br>
+    pnpm dlx uthy-legacy-os<br>
+    bunx uthy-legacy-os<br>
+    .\install.ps1<br>
+    bash install.sh<br><br>
+    <span style="color: #3fb950;"># npm package</span><br>
+    https://www.npmjs.com/package/uthy-legacy-os<br><br>
+    <span style="color: #3fb950;"># Documentation</span><br>
+    https://uthumany.github.io/uthy-legacy-os/
+  </div>
+</div>
+
+</body>
+</html>

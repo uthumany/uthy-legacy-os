@@ -1,0 +1,49 @@
+name: Validate Skills
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**/*.md'
+      - 'workflows/**/*.md'
+      - 'scripts/validate-skills.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'skills/**/*.md'
+      - 'workflows/**/*.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate all skills
+        run: python scripts/validate-skills.py
+
+      - name: Check file structure
+        run: |
+          echo "=== SKILL FILES ==="
+          find skills/ -name "SKILL.md" | sort | wc -l
+          echo "total skill files"
+          echo ""
+          echo "=== WORKFLOW FILES ==="
+          find workflows/ -name "SKILL.md" | sort | wc -l
+          echo "total workflow files"
+          echo ""
+          echo "=== TEMPLATES ==="
+          ls templates/*.md | wc -l
+          echo "total templates"
+          echo ""
+          echo "=== SAMPLES ==="
+          ls samples/*.md | wc -l
+          echo "total samples"
